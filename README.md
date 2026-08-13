@@ -1,8 +1,8 @@
 # pixel-music
 
-Dibujá paredes de colores, cada color es una nota. Una pelota rebota con física simple y, cada vez que choca contra una celda dibujada, suena la nota de ese color y la celda desaparece. Las paredes externas también suenan con la nota del color seleccionado.
+Dibujá paredes de colores, cada color es una nota. Una pelota rebota con física simple y, cada vez que choca contra una celda dibujada, suena la nota de ese color y la celda desaparece. Las paredes superior e inferior también suenan con la nota del color seleccionado; las laterales rebotan en silencio.
 
-Un juguete musical web, sin dependencias: HTML + Canvas 2D + Web Audio API. Funciona abriendo el archivo, sin build ni servidor.
+Un juguete musical web, sin dependencias: HTML + Canvas 2D + HTML5 `<audio>`. Funciona abriendo el archivo, sin build ni servidor.
 
 ## Cómo usarlo
 
@@ -28,7 +28,7 @@ Un juguete musical web, sin dependencias: HTML + Canvas 2D + Web Audio API. Func
 
 - **Cuadrícula**: 48 × 30 celdas. Cada celda pintada es un obstáculo sólido.
 - **Física**: la pelota es un círculo con velocidad; rebota contra los bordes del lienzo y contra las celdas pintadas. La colisión detecta la celda más cercana, empuja la pelota hacia afuera y refleja la velocidad sobre la normal (con una pequeña amortiguación). La celda golpeada **desaparece** tras el rebote. Gravedad opcional.
-- **Sonido**: Web Audio genera cada nota con un oscilador + envolvente corta y una reverberación sutil. Las notas están limitadas en frecuencia para evitar disparos en ráfaga.
+- **Sonido**: cada nota se sintetiza como un WAV en memoria y se reproduce con elementos HTML5 `<audio>`, para que siga sonando aunque el teléfono esté en modo silencio (en iOS el switch de silencio no silencia los elementos `<audio>`, pero sí Web Audio).
 
 ## Mapa de colores → notas
 

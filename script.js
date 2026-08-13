@@ -2,11 +2,17 @@
 
 /* ============================================================
    pixel-music — draw colored walls, bounce a ball, make music.
-   Vanilla JS + Canvas 2D + Web Audio. No dependencies.
+   Vanilla JS + Canvas 2D + HTML5 <audio>. No dependencies.
 
    Cada celda de color es una nota. La pelota rebota contra las
-   celdas (suena la nota y la celda desaparece) y contra las
-   paredes externas (suena la nota del color seleccionado).
+   celdas (suena la nota y la celda desaparece) y contra las paredes
+   superior/inferior (suenan la nota del color seleccionado). Las
+   paredes laterales rebotan en silencio.
+
+   El sonido se reproduce con elementos <audio> (WAV en memoria) en
+   lugar de Web Audio, para que siga sonando con el teléfono en
+   silencio: en iOS el switch de silencio silencia Web Audio, pero
+   no silencia los elementos HTML5 <audio>.
    ============================================================ */
 
 // ---------- Grid config ----------
@@ -62,7 +68,6 @@ const speedRange = document.getElementById('speedRange');
 const volRange = document.getElementById('volRange');
 const gravityToggle = document.getElementById('gravityToggle');
 const muteToggle = document.getElementById('muteToggle');
-const audioStatus = document.getElementById('audioStatus');
 
 // crisp rendering on hi-DPI screens
 const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -70,118 +75,131 @@ canvas.width = W * dpr;
 canvas.height = H * dpr;
 ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-// ---------- Audio ----------
-let audioCtx = null;
-let masterGain = null;
-let reverb = null;
-let muted = false;
+// ---------- Audio (HTML5 <audio> WAV samples) ----------
+// We synthesize each note as a short WAV in memory and play it through
+// <audio> elements, because iOS does not mute HTML5 media with the silent
+// switch (it DOES mute Web Audio). This keeps the toy audible on silent mode.
+const SAMPLE_RATE = 44100;
+const NOTE_DURATION = 0.5;
+const POOL_SIZE = 4;
 
-function makeImpulse(duration = 1.5, decay = 2.8) {
-  const rate = audioCtx.sampleRate;
-  const len = Math.floor(rate * duration);
-  const buf = audioCtx.createBuffer(2, len, rate);
-  for (let ch = 0; ch < 2; ch++) {
-    const data = buf.getChannelData(ch);
-    for (let i = 0; i < len; i++) {
-      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, decay);
-    }
+const pools = {};       // noteIndex -> Audio[]
+const poolCursor = {};  // noteIndex -> next element to use
+let volume = parseFloat(volRange.value);
+let muted = false;
+let audioInit = false;
+let lastNoteAt = 0;
+
+function synthSamples(freq, duration, rate) {
+  const n = Math.floor(duration * rate);
+  const out = new Float32Array(n);
+  const twoPi = 2 * Math.PI;
+  for (let i = 0; i < n; i++) {
+    const t = i / rate;
+    const ph = twoPi * freq * t;
+    let v = Math.sin(ph) + 0.4 * Math.sin(2 * ph) + 0.15 * Math.sin(3 * ph);
+    v *= Math.pow(1 - t / duration, 2.0); // decay
+    v *= Math.min(1, t / 0.004);          // short attack to avoid clicks
+    out[i] = v * 0.5;
   }
-  return buf;
+  return out;
+}
+
+function encodeWav(samples, rate) {
+  const n = samples.length;
+  const buffer = new ArrayBuffer(44 + n * 2);
+  const view = new DataView(buffer);
+  const writeStr = (off, s) => {
+    for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i));
+  };
+  writeStr(0, 'RIFF');
+  view.setUint32(4, 36 + n * 2, true);
+  writeStr(8, 'WAVE');
+  writeStr(12, 'fmt ');
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);              // PCM
+  view.setUint16(22, 1, true);              // mono
+  view.setUint32(24, rate, true);
+  view.setUint32(28, rate * 2, true);       // byte rate
+  view.setUint16(32, 2, true);              // block align
+  view.setUint16(34, 16, true);             // bits per sample
+  writeStr(36, 'data');
+  view.setUint32(40, n * 2, true);
+  for (let i = 0; i < n; i++) {
+    let s = Math.max(-1, Math.min(1, samples[i]));
+    view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+  }
+  return buffer;
+}
+
+function buildPool(noteIndex, url) {
+  const arr = [];
+  for (let i = 0; i < POOL_SIZE; i++) {
+    const a = new Audio(url);
+    a.preload = 'auto';
+    a.volume = muted ? 0 : volume;
+    arr.push(a);
+  }
+  pools[noteIndex] = arr;
+  poolCursor[noteIndex] = 0;
+}
+
+function initAudio() {
+  if (audioInit) return;
+  audioInit = true;
+  PALETTE.forEach((c, i) => {
+    const samples = synthSamples(c.freq, NOTE_DURATION, SAMPLE_RATE);
+    const wav = encodeWav(samples, SAMPLE_RATE);
+    const blob = new Blob([wav], { type: 'audio/wav' });
+    const url = URL.createObjectURL(blob);
+    buildPool(i + 1, url);
+  });
+}
+
+function setAllVolumes() {
+  const v = muted ? 0 : volume;
+  for (const k in pools) {
+    pools[k].forEach((el) => { el.volume = v; });
+  }
 }
 
 function ensureAudio() {
-  const AC = window.AudioContext || window.webkitAudioContext;
-  if (!AC) return;
-  if (!audioCtx) {
-    audioCtx = new AC();
-    masterGain = audioCtx.createGain();
-    masterGain.gain.value = parseFloat(volRange.value);
-    masterGain.connect(audioCtx.destination);
-
-    // light reverb for warmth
-    reverb = audioCtx.createConvolver();
-    reverb.buffer = makeImpulse();
-    const wet = audioCtx.createGain();
-    wet.gain.value = 0.35;
-    reverb.connect(wet);
-    wet.connect(masterGain);
-
-    audioCtx.onstatechange = updateAudioStatus;
+  initAudio();
+  // Prime the audio elements inside a user gesture so iOS allows playback.
+  const first = pools[1];
+  if (first && first[0]) {
+    const el = first[0];
+    const prev = el.volume;
+    el.volume = 0;
+    const p = el.play();
+    if (p && p.catch) p.catch(() => {});
+    setTimeout(() => {
+      el.pause();
+      el.currentTime = 0;
+      el.volume = muted ? 0 : volume;
+    }, 80);
   }
-  if (audioCtx.state === 'suspended') audioCtx.resume();
-
-  // iOS unlock trick: start a silent sample through the destination inside the
-  // user gesture. Some iOS/WebKit builds only flip the context to "running"
-  // after an actual source node is started.
-  try {
-    const buf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
-    const src = audioCtx.createBufferSource();
-    src.buffer = buf;
-    src.connect(audioCtx.destination);
-    src.start(0);
-  } catch (err) { /* ignore */ }
-
-  updateAudioStatus();
 }
 
-let lastNoteAt = -1;
-
-function playNote(freq) {
-  if (!audioCtx || muted) return;
-  if (audioCtx.state !== 'running') audioCtx.resume();
-  const now = audioCtx.currentTime;
-  if (now - lastNoteAt < 0.028) return; // avoid machine-gun retriggering
+function playNote(noteIndex) {
+  if (muted) return;
+  const pool = pools[noteIndex];
+  if (!pool || pool.length === 0) return;
+  const now = performance.now();
+  if (now - lastNoteAt < 25) return; // avoid machine-gun retriggering
   lastNoteAt = now;
-
-  const t = now;
-  const osc = audioCtx.createOscillator();
-  osc.type = 'triangle';
-  osc.frequency.value = freq;
-
-  const osc2 = audioCtx.createOscillator();
-  osc2.type = 'sine';
-  osc2.frequency.value = freq * 2;
-  const g2 = audioCtx.createGain();
-  g2.gain.value = 0.22;
-
-  const g = audioCtx.createGain();
-  g.gain.setValueAtTime(0.0001, t);
-  g.gain.exponentialRampToValueAtTime(0.9, t + 0.008);
-  g.gain.exponentialRampToValueAtTime(0.0001, t + 0.55);
-
-  osc.connect(g);
-  osc2.connect(g2);
-  g2.connect(g);
-  g.connect(masterGain); // dry
-  g.connect(reverb);     // wet
-
-  osc.start(t);
-  osc.stop(t + 0.6);
-  osc2.start(t);
-  osc2.stop(t + 0.6);
+  const idx = poolCursor[noteIndex];
+  poolCursor[noteIndex] = (idx + 1) % pool.length;
+  const el = pool[idx];
+  try {
+    el.currentTime = 0;
+    const p = el.play();
+    if (p && p.catch) p.catch(() => {});
+  } catch (err) { /* ignore */ }
 }
 
-function updateAudioStatus() {
-  if (!audioStatus) return;
-  if (!audioCtx) {
-    audioStatus.textContent = '';
-    audioStatus.style.display = 'none';
-    return;
-  }
-  audioStatus.style.display = '';
-  if (audioCtx.state === 'running') {
-    audioStatus.textContent = '🔊 sonido listo';
-    audioStatus.className = 'audio-status ok';
-  } else {
-    audioStatus.textContent = '🔇 audio bloqueado';
-    audioStatus.className = 'audio-status warn';
-  }
-}
-
-function wallNote() {
-  // note of the currently selected color (used by the outer walls)
-  const i = Math.min(Math.max(currentColor, 1), PALETTE.length);
-  return PALETTE[i - 1];
+function wallNoteIndex() {
+  return Math.min(Math.max(currentColor, 1), PALETTE.length);
 }
 
 // ---------- Palette UI ----------
@@ -373,7 +391,7 @@ function collideCells() {
   }
 
   // sound + the cell disappears after the bounce
-  playNote(PALETTE[best.ci - 1].freq);
+  playNote(best.ci);
   const bxc = best.idx % COLS;
   const byc = Math.floor(best.idx / COLS);
   bursts.push({
@@ -399,17 +417,23 @@ function step(dt) {
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
-  // outer walls — bounce and play the selected note
-  let ex = null;
-  let ey = null;
-  if (ball.x - BALL_RADIUS < 0) { ball.x = BALL_RADIUS; ball.vx = Math.abs(ball.vx); ex = BALL_RADIUS; ey = ball.y; }
-  else if (ball.x + BALL_RADIUS > W) { ball.x = W - BALL_RADIUS; ball.vx = -Math.abs(ball.vx); ex = W - BALL_RADIUS; ey = ball.y; }
-  if (ball.y - BALL_RADIUS < 0) { ball.y = BALL_RADIUS; ball.vy = Math.abs(ball.vy); ey = BALL_RADIUS; ex = ball.x; }
-  else if (ball.y + BALL_RADIUS > H) { ball.y = H - BALL_RADIUS; ball.vy = -Math.abs(ball.vy); ey = H - BALL_RADIUS; ex = ball.x; }
-  if (ex !== null) {
-    const wn = wallNote();
-    playNote(wn.freq);
-    bursts.push({ x: ex, y: ey, t: performance.now(), color: wn.hex });
+  // outer walls
+  // left/right walls: bounce silently
+  if (ball.x - BALL_RADIUS < 0) { ball.x = BALL_RADIUS; ball.vx = Math.abs(ball.vx); }
+  else if (ball.x + BALL_RADIUS > W) { ball.x = W - BALL_RADIUS; ball.vx = -Math.abs(ball.vx); }
+  // top/bottom walls: bounce and play the selected note
+  if (ball.y - BALL_RADIUS < 0) {
+    ball.y = BALL_RADIUS;
+    ball.vy = Math.abs(ball.vy);
+    const wi = wallNoteIndex();
+    playNote(wi);
+    bursts.push({ x: ball.x, y: BALL_RADIUS, t: performance.now(), color: PALETTE[wi - 1].hex });
+  } else if (ball.y + BALL_RADIUS > H) {
+    ball.y = H - BALL_RADIUS;
+    ball.vy = -Math.abs(ball.vy);
+    const wi = wallNoteIndex();
+    playNote(wi);
+    bursts.push({ x: ball.x, y: H - BALL_RADIUS, t: performance.now(), color: PALETTE[wi - 1].hex });
   }
 
   // collide with painted cells (iterate a few times for corners)
@@ -529,7 +553,8 @@ speedRange.addEventListener('input', () => {
 });
 
 volRange.addEventListener('input', () => {
-  if (masterGain) masterGain.gain.value = parseFloat(volRange.value);
+  volume = parseFloat(volRange.value);
+  setAllVolumes();
 });
 
 gravityToggle.addEventListener('change', () => {
@@ -539,6 +564,7 @@ gravityToggle.addEventListener('change', () => {
 muteToggle.addEventListener('click', () => {
   muted = !muted;
   muteToggle.textContent = muted ? '🔇' : '🔊';
+  setAllVolumes();
 });
 
 window.addEventListener('keydown', (e) => {
@@ -562,5 +588,4 @@ window.addEventListener('pointerdown', firstGesture, { once: true, passive: true
 window.addEventListener('touchend', firstGesture, { once: true, passive: true });
 window.addEventListener('click', firstGesture, { once: true, passive: true });
 
-updateAudioStatus();
 requestAnimationFrame(loop);
