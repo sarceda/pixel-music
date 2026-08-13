@@ -3,6 +3,10 @@
 /* ============================================================
    pixel-music — draw colored walls, bounce a ball, make music.
    Vanilla JS + Canvas 2D + Web Audio. No dependencies.
+
+   Cada celda de color es una nota. La pelota rebota contra las
+   celdas (suena la nota y la celda desaparece) y contra las
+   paredes externas (suena la nota del color seleccionado).
    ============================================================ */
 
 // ---------- Grid config ----------
@@ -44,8 +48,8 @@ let lastTime = null;
 let currentColor = 1;      // 1..PALETTE.length
 let eraser = false;
 
-// cell flash feedback (index -> timestamp ms)
-const flashes = {};
+// collision burst feedback (expanding rings)
+const bursts = [];
 
 // ---------- DOM ----------
 const canvas = document.getElementById('board');
@@ -86,7 +90,7 @@ function makeImpulse(duration = 1.5, decay = 2.8) {
 
 function ensureAudio() {
   if (audioCtx) {
-    if (audioCtx.state === 'suspended') audioCtx.resume();
+    if (audioCtx.state !== 'running') audioCtx.resume();
     return;
   }
   const AC = window.AudioContext || window.webkitAudioContext;
@@ -103,9 +107,13 @@ function ensureAudio() {
   wet.gain.value = 0.35;
   reverb.connect(wet);
   wet.connect(masterGain);
+
+  // Safari/iOS may create the context in "suspended" state even inside a
+  // user gesture — resume it explicitly so the first bounce already sounds.
+  if (audioCtx.state !== 'running') audioCtx.resume();
 }
 
-let lastNoteAt = 0;
+let lastNoteAt = -1;
 
 function playNote(freq) {
   if (!audioCtx || muted) return;
@@ -139,6 +147,12 @@ function playNote(freq) {
   osc.stop(t + 0.6);
   osc2.start(t);
   osc2.stop(t + 0.6);
+}
+
+function wallNote() {
+  // note of the currently selected color (used by the outer walls)
+  const i = Math.min(Math.max(currentColor, 1), PALETTE.length);
+  return PALETTE[i - 1];
 }
 
 // ---------- Palette UI ----------
@@ -329,8 +343,17 @@ function collideCells() {
     ball.vy *= 0.995;
   }
 
+  // sound + the cell disappears after the bounce
   playNote(PALETTE[best.ci - 1].freq);
-  flashes[best.idx] = performance.now();
+  const bxc = best.idx % COLS;
+  const byc = Math.floor(best.idx / COLS);
+  bursts.push({
+    x: bxc * CELL + CELL / 2,
+    y: byc * CELL + CELL / 2,
+    t: performance.now(),
+    color: PALETTE[best.ci - 1].hex,
+  });
+  grid[best.idx] = 0;
 }
 
 function step(dt) {
@@ -347,11 +370,18 @@ function step(dt) {
   ball.x += ball.vx * dt;
   ball.y += ball.vy * dt;
 
-  // outer walls
-  if (ball.x - BALL_RADIUS < 0) { ball.x = BALL_RADIUS; ball.vx = Math.abs(ball.vx); }
-  else if (ball.x + BALL_RADIUS > W) { ball.x = W - BALL_RADIUS; ball.vx = -Math.abs(ball.vx); }
-  if (ball.y - BALL_RADIUS < 0) { ball.y = BALL_RADIUS; ball.vy = Math.abs(ball.vy); }
-  else if (ball.y + BALL_RADIUS > H) { ball.y = H - BALL_RADIUS; ball.vy = -Math.abs(ball.vy); }
+  // outer walls — bounce and play the selected note
+  let ex = null;
+  let ey = null;
+  if (ball.x - BALL_RADIUS < 0) { ball.x = BALL_RADIUS; ball.vx = Math.abs(ball.vx); ex = BALL_RADIUS; ey = ball.y; }
+  else if (ball.x + BALL_RADIUS > W) { ball.x = W - BALL_RADIUS; ball.vx = -Math.abs(ball.vx); ex = W - BALL_RADIUS; ey = ball.y; }
+  if (ball.y - BALL_RADIUS < 0) { ball.y = BALL_RADIUS; ball.vy = Math.abs(ball.vy); ey = BALL_RADIUS; ex = ball.x; }
+  else if (ball.y + BALL_RADIUS > H) { ball.y = H - BALL_RADIUS; ball.vy = -Math.abs(ball.vy); ey = H - BALL_RADIUS; ex = ball.x; }
+  if (ex !== null) {
+    const wn = wallNote();
+    playNote(wn.freq);
+    bursts.push({ x: ex, y: ey, t: performance.now(), color: wn.hex });
+  }
 
   // collide with painted cells (iterate a few times for corners)
   for (let i = 0; i < 3; i++) collideCells();
@@ -376,7 +406,6 @@ function draw() {
   ctx.stroke();
 
   // painted cells
-  const now = performance.now();
   for (let i = 0; i < grid.length; i++) {
     const ci = grid[i];
     if (ci === 0) continue;
@@ -384,13 +413,6 @@ function draw() {
     const cy = Math.floor(i / COLS);
     ctx.fillStyle = PALETTE[ci - 1].hex;
     ctx.fillRect(cx * CELL + 1, cy * CELL + 1, CELL - 2, CELL - 2);
-
-    const ft = flashes[i];
-    if (ft && now - ft < 180) {
-      const a = 1 - (now - ft) / 180;
-      ctx.fillStyle = `rgba(255,255,255,${(a * 0.85).toFixed(3)})`;
-      ctx.fillRect(cx * CELL + 1, cy * CELL + 1, CELL - 2, CELL - 2);
-    }
   }
 
   // trail
@@ -411,6 +433,23 @@ function draw() {
   ctx.arc(ball.x, ball.y, BALL_RADIUS, 0, Math.PI * 2);
   ctx.fill();
   ctx.restore();
+
+  // collision bursts
+  const now = performance.now();
+  for (let i = bursts.length - 1; i >= 0; i--) {
+    const b = bursts[i];
+    const age = now - b.t;
+    if (age > 260) { bursts.splice(i, 1); continue; }
+    const p = age / 260;
+    ctx.save();
+    ctx.globalAlpha = 1 - p;
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = 0.5 + 3 * (1 - p);
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 2 + p * CELL * 1.4, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
 }
 
 // ---------- Main loop ----------
@@ -449,7 +488,7 @@ btnReset.addEventListener('click', () => {
 });
 btnClear.addEventListener('click', () => {
   grid.fill(0);
-  for (const k in flashes) delete flashes[k];
+  bursts.length = 0;
 });
 
 speedRange.addEventListener('input', () => {
@@ -476,7 +515,7 @@ muteToggle.addEventListener('click', () => {
 window.addEventListener('keydown', (e) => {
   if (e.target.tagName === 'INPUT') return;
   if (e.code === 'Space') { e.preventDefault(); togglePlay(); }
-  else if (e.key === 'c' || e.key === 'C') { grid.fill(0); for (const k in flashes) delete flashes[k]; }
+  else if (e.key === 'c' || e.key === 'C') { grid.fill(0); bursts.length = 0; }
   else if (e.key === 'r' || e.key === 'R') { ball.x = W / 2; ball.y = H / 2; trail.length = 0; randomVelocity(); }
   else if (e.key === 'g' || e.key === 'G') { gravityToggle.checked = !gravityToggle.checked; gravity = gravityToggle.checked ? 340 : 0; }
   else if (e.key === 'm' || e.key === 'M') { muteToggle.click(); }

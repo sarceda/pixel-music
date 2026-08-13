@@ -1,6 +1,6 @@
 # pixel-music
 
-Dibujá paredes de colores, cada color es una nota. Una pelota rebota con física simple y, cada vez que choca contra una pared dibujada, suena la nota de ese color.
+Dibujá paredes de colores, cada color es una nota. Una pelota rebota con física simple y, cada vez que choca contra una celda dibujada, suena la nota de ese color y la celda desaparece. Las paredes externas también suenan con la nota del color seleccionado.
 
 Un juguete musical web, sin dependencias: HTML + Canvas 2D + Web Audio API. Funciona abriendo el archivo, sin build ni servidor.
 
@@ -9,7 +9,7 @@ Un juguete musical web, sin dependencias: HTML + Canvas 2D + Web Audio API. Func
 1. Abrí `index.html` (o andá a la [demo en GitHub Pages](https://sarceda.github.io/pixel-music/)).
 2. Elegí un color en la paleta de la izquierda (cada color = una nota).
 3. Dibujá líneas/paredes sobre la cuadrícula (click o arrastrar).
-4. Dala a **▶ Reproducir** y mirá cómo la pelota rebota y suena.
+4. Dala a **▶ Reproducir** y mirá cómo la pelota rebota, suena y va consumiendo las celdas.
 
 ## Controles
 
@@ -27,7 +27,7 @@ Un juguete musical web, sin dependencias: HTML + Canvas 2D + Web Audio API. Func
 ## Cómo funciona
 
 - **Cuadrícula**: 48 × 30 celdas. Cada celda pintada es un obstáculo sólido.
-- **Física**: la pelota es un círculo con velocidad; rebota contra los bordes del lienzo y contra las celdas pintadas. La colisión detecta la celda más cercana, empuja la pelota hacia afuera y refleja la velocidad sobre la normal (con una pequeña amortiguación). Gravedad opcional.
+- **Física**: la pelota es un círculo con velocidad; rebota contra los bordes del lienzo y contra las celdas pintadas. La colisión detecta la celda más cercana, empuja la pelota hacia afuera y refleja la velocidad sobre la normal (con una pequeña amortiguación). La celda golpeada **desaparece** tras el rebote. Gravedad opcional.
 - **Sonido**: Web Audio genera cada nota con un oscilador + envolvente corta y una reverberación sutil. Las notas están limitadas en frecuencia para evitar disparos en ráfaga.
 
 ## Mapa de colores → notas
