@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>pixel-music</title>
+  <meta name="description" content="Dibujá paredes de colores, cada color es una nota. Una pelota rebota y suena." />
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='45' fill='%2340a9ff'/%3E%3Ccircle cx='50' cy='50' r='20' fill='%230b0d14'/%3E%3Ccircle cx='50' cy='50' r='10' fill='%23ffd740'/%3E%3C/svg%3E" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>pixel-music</h1>
+      <p class="tagline">Dibujá paredes de colores &middot; cada color es una nota &middot; la pelota rebota y suena</p>
+    </div>
+    <div class="controls">
+      <button id="btnPlay" class="btn primary" title="Iniciar / pausar (Espacio)">▶ Reproducir</button>
+      <button id="btnReset" class="btn" title="Reiniciar la pelota (R)">↺ Pelota</button>
+      <button id="btnClear" class="btn" title="Borrar todo (C)">✕ Limpiar</button>
+      <span class="sep"></span>
+      <label class="ctl" title="Velocidad de la pelota">
+        <span>Velocidad</span>
+        <input type="range" id="speedRange" min="0.4" max="2.5" step="0.1" value="1" />
+      </label>
+      <label class="ctl" title="Volumen">
+        <span>Volumen</span>
+        <input type="range" id="volRange" min="0" max="1" step="0.01" value="0.8" />
+      </label>
+      <label class="ctl check" title="Activar gravedad (G)">
+        <input type="checkbox" id="gravityToggle" />
+        <span>Gravedad</span>
+      </label>
+      <button id="muteToggle" class="btn icon" title="Silenciar (M)">🔊</button>
+    </div>
+  </header>
+
+  <main class="stage">
+    <aside class="palette" id="palette" aria-label="Paleta de colores"></aside>
+    <div class="board-wrap">
+      <canvas id="board"></canvas>
+    </div>
+  </main>
+
+  <footer class="hint">
+    Click o arrastrá para dibujar &middot; click derecho borra &middot; elegí un color para cambiar la nota
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
