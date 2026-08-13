@@ -62,6 +62,7 @@ const speedRange = document.getElementById('speedRange');
 const volRange = document.getElementById('volRange');
 const gravityToggle = document.getElementById('gravityToggle');
 const muteToggle = document.getElementById('muteToggle');
+const audioStatus = document.getElementById('audioStatus');
 
 // crisp rendering on hi-DPI screens
 const dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -89,34 +90,45 @@ function makeImpulse(duration = 1.5, decay = 2.8) {
 }
 
 function ensureAudio() {
-  if (audioCtx) {
-    if (audioCtx.state !== 'running') audioCtx.resume();
-    return;
-  }
   const AC = window.AudioContext || window.webkitAudioContext;
   if (!AC) return;
-  audioCtx = new AC();
-  masterGain = audioCtx.createGain();
-  masterGain.gain.value = parseFloat(volRange.value);
-  masterGain.connect(audioCtx.destination);
+  if (!audioCtx) {
+    audioCtx = new AC();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = parseFloat(volRange.value);
+    masterGain.connect(audioCtx.destination);
 
-  // light reverb for warmth
-  reverb = audioCtx.createConvolver();
-  reverb.buffer = makeImpulse();
-  const wet = audioCtx.createGain();
-  wet.gain.value = 0.35;
-  reverb.connect(wet);
-  wet.connect(masterGain);
+    // light reverb for warmth
+    reverb = audioCtx.createConvolver();
+    reverb.buffer = makeImpulse();
+    const wet = audioCtx.createGain();
+    wet.gain.value = 0.35;
+    reverb.connect(wet);
+    wet.connect(masterGain);
 
-  // Safari/iOS may create the context in "suspended" state even inside a
-  // user gesture — resume it explicitly so the first bounce already sounds.
-  if (audioCtx.state !== 'running') audioCtx.resume();
+    audioCtx.onstatechange = updateAudioStatus;
+  }
+  if (audioCtx.state === 'suspended') audioCtx.resume();
+
+  // iOS unlock trick: start a silent sample through the destination inside the
+  // user gesture. Some iOS/WebKit builds only flip the context to "running"
+  // after an actual source node is started.
+  try {
+    const buf = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+    const src = audioCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(audioCtx.destination);
+    src.start(0);
+  } catch (err) { /* ignore */ }
+
+  updateAudioStatus();
 }
 
 let lastNoteAt = -1;
 
 function playNote(freq) {
   if (!audioCtx || muted) return;
+  if (audioCtx.state !== 'running') audioCtx.resume();
   const now = audioCtx.currentTime;
   if (now - lastNoteAt < 0.028) return; // avoid machine-gun retriggering
   lastNoteAt = now;
@@ -147,6 +159,23 @@ function playNote(freq) {
   osc.stop(t + 0.6);
   osc2.start(t);
   osc2.stop(t + 0.6);
+}
+
+function updateAudioStatus() {
+  if (!audioStatus) return;
+  if (!audioCtx) {
+    audioStatus.textContent = '';
+    audioStatus.style.display = 'none';
+    return;
+  }
+  audioStatus.style.display = '';
+  if (audioCtx.state === 'running') {
+    audioStatus.textContent = '🔊 sonido listo';
+    audioStatus.className = 'audio-status ok';
+  } else {
+    audioStatus.textContent = '🔇 audio bloqueado';
+    audioStatus.className = 'audio-status warn';
+  }
 }
 
 function wallNote() {
@@ -526,4 +555,12 @@ window.addEventListener('keydown', (e) => {
 buildPalette();
 refreshSelection();
 randomVelocity();
+
+// unlock audio on the very first user gesture (iOS requires a real touch/click)
+function firstGesture() { ensureAudio(); }
+window.addEventListener('pointerdown', firstGesture, { once: true, passive: true });
+window.addEventListener('touchend', firstGesture, { once: true, passive: true });
+window.addEventListener('click', firstGesture, { once: true, passive: true });
+
+updateAudioStatus();
 requestAnimationFrame(loop);

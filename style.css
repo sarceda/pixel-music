@@ -101,6 +101,28 @@ body {
 
 .btn.icon { padding: 8px 10px; font-size: 15px; }
 
+.audio-status {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.audio-status.ok {
+  color: #69f0ae;
+  border-color: rgba(105, 240, 174, 0.35);
+  background: rgba(105, 240, 174, 0.08);
+}
+
+.audio-status.warn {
+  color: #ffd740;
+  border-color: rgba(255, 215, 64, 0.35);
+  background: rgba(255, 215, 64, 0.08);
+}
+
 /* ---------- Controls (sliders / toggles) ---------- */
 .ctl {
   display: flex;
